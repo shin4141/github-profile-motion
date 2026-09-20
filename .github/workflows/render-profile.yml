@@ -1,0 +1,70 @@
+name: Render profile motion (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      generator_ref:
+        description: Generator commit or branch; pin a full commit for stable visuals
+        type: string
+        default: main
+      config_path:
+        type: string
+        default: profile-motion.json
+      readme_path:
+        type: string
+        default: README.md
+      output_path:
+        type: string
+        default: profile-motion.gif
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the calling profile repository
+        uses: actions/checkout@v7
+      - name: Check out the generator
+        uses: actions/checkout@v7
+        with:
+          repository: shin4141/github-profile-motion
+          ref: ${{ inputs.generator_ref }}
+          path: .profile-motion-source
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install renderer dependency
+        run: python -m pip install 'Pillow==12.3.0'
+      - name: Capture real activity and validate generated GIF
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROFILE_CONFIG: ${{ inputs.config_path }}
+          PROFILE_README: ${{ inputs.readme_path }}
+          PROFILE_OUTPUT: ${{ inputs.output_path }}
+        run: |
+          python .profile-motion-source/update_profile.py \
+            --profile-root . --config "$PROFILE_CONFIG" --readme "$PROFILE_README" \
+            --output "$PROFILE_OUTPUT" --repository "$GITHUB_REPOSITORY" \
+            --branch "$GITHUB_REF_NAME"
+      - name: Publish only after capture and validation succeed
+        env:
+          PROFILE_README: ${{ inputs.readme_path }}
+          PROFILE_OUTPUT: ${{ inputs.output_path }}
+        run: |
+          git add -- "$PROFILE_OUTPUT" "$PROFILE_README"
+          if git diff --cached --quiet; then
+            echo 'No generated change to publish.'
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "Refresh profile motion $(date -u +%Y-%m-%d)"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+      - name: Explain a failed refresh
+        if: failure()
+        run: |
+          echo 'The refresh failed; no new image was published. The previous profile GIF remains. Inspect the failed step and re-run manually after fixing it. No demo-data fallback is used.' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,17 @@
+name: Daily profile animation
+
+on:
+  schedule:
+    - cron: '17 3 * * *' # daily at 03:17 UTC; GitHub may delay a run
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: profile-motion-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    uses: shin4141/github-profile-motion/.github/workflows/render-profile.yml@main

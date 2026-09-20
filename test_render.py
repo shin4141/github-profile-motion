@@ -12,6 +12,17 @@ ROOT = Path(__file__).parent
 
 
 class RenderTest(unittest.TestCase):
+    def test_profile_icon_can_live_beside_an_external_config(self):
+        with TemporaryDirectory() as directory:
+            asset_root = Path(directory)
+            Image.new("RGBA", (64, 64), (231, 105, 65, 255)).save(asset_root / "avatar.png")
+            config = {"username": "example-user", "icon": "avatar.png",
+                      "accent": "#e28358", "glow": "#ffe194"}
+            data = json.loads((ROOT / "example_activity.json").read_text())
+            images = list(render.frames(config, data, 216, asset_root=asset_root))
+            self.assertGreater(len(images), 200)
+            self.assertNotEqual(images[0].tobytes(), images[20].tobytes())
+
     def test_capture_writes_dated_public_snapshot_and_rejects_bad_dates(self):
         response = {"data": {"user": {"contributionsCollection": {
             "contributionCalendar": {"weeks": [{"contributionDays": [
