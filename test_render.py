@@ -12,6 +12,29 @@ ROOT = Path(__file__).parent
 
 
 class RenderTest(unittest.TestCase):
+    def test_frameless_themes_and_flight_stay_inside_compact_canvas(self):
+        self.assertLess(render.H, 164)
+        self.assertLess(render.W, 580)
+        config = json.loads((ROOT / "cat.json").read_text())
+        data = json.loads((ROOT / "shin_activity_2026-09-20.json").read_text())
+        for theme in ("light", "dark"):
+            first = next(render.frames(config, data, 216, theme=theme))
+            self.assertEqual(first.size, (render.W, render.H))
+            self.assertEqual(first.getpixel((render.W//2, 0)),
+                             render.THEMES[theme]["background"])
+            self.assertNotEqual(first.getpixel((render.X0+render.CENTER, render.Y0+render.CENTER)),
+                                render.THEMES[theme]["background"])
+        grid = render.activity_grid(data)
+        for scene, stop in enumerate(render.scene_stops(grid, 216)):
+            plan = render.shock_plan(grid, 216+scene*100003, stop)
+            for cell in plan:
+                for t in range(27, 88):
+                    x, y = render.cell_position(cell, t)
+                    self.assertGreaterEqual(x, 6.5)
+                    self.assertLessEqual(x+render.TILE, render.W-6.5)
+                    self.assertGreaterEqual(y, 6.5)
+                    self.assertLessEqual(y+render.TILE, render.H-6.5)
+
     def test_profile_icon_can_live_beside_an_external_config(self):
         with TemporaryDirectory() as directory:
             asset_root = Path(directory)
@@ -54,7 +77,8 @@ class RenderTest(unittest.TestCase):
         self.assertEqual([digest(im) for im in first],
                          [digest(im) for im in render.frames(config, data, 216)])
         self.assertNotEqual(first[0].tobytes(), first[-1].tobytes())
-        self.assertEqual({im.getpixel((4, 4)) for im in first}, {(17, 23, 37)})
+        self.assertEqual({im.getpixel((4, 4)) for im in first},
+                         {render.THEMES["light"]["background"]})
         self.assertEqual(input_path.read_bytes(), before)
         self.assertTrue(any(day["count"] > 0 for day in data["days"]))
 
@@ -89,7 +113,7 @@ class RenderTest(unittest.TestCase):
                            render.walk_phase(outgoing["x"])) % math.tau
             self.assertAlmostEqual(phase_delta,
                                    math.tau*render.WALK_SPEED/render.STRIDE)
-            # The card and restored squares never blink or reset at either seam.
+            # The frameless grid and restored squares never blink at either seam.
             self.assertEqual(doubled[left].crop((36, 0, render.W, render.H)).tobytes(),
                              doubled[right].crop((36, 0, render.W, render.H)).tobytes())
             self.assertNotEqual(doubled[left].tobytes(), doubled[right].tobytes())
@@ -191,15 +215,18 @@ class RenderTest(unittest.TestCase):
         expected = len(fox_states)
         for name, n in (("crowned_cat.gif", len(render.build_timeline(render.activity_grid(
                             json.loads((ROOT / "shin_activity_2026-09-20.json").read_text())), 216))),
-                        ("fox.gif", expected),
-                        ("crowned_cat_touch.gif", 66), ("heading.gif", 40),
+                        ("crowned_cat_dark.gif", len(render.build_timeline(render.activity_grid(
+                            json.loads((ROOT / "shin_activity_2026-09-20.json").read_text())), 216))),
+                        ("fox.gif", expected), ("fox_dark.gif", expected),
+                        ("crowned_cat_touch.gif", 66), ("crowned_cat_touch_dark.gif", 66),
+                        ("heading.gif", 40),
                         ("heading_mobile.gif", 40)):
             with Image.open(ROOT / name) as gif:
                 # GIF encoding can coalesce visually identical adjacent frames.
                 self.assertGreaterEqual(gif.n_frames, n-12)
                 self.assertLessEqual(gif.n_frames, n)
                 self.assertEqual(gif.info["loop"], 0)
-                if name in ("crowned_cat.gif", "fox.gif"):
+                if name in ("crowned_cat.gif", "crowned_cat_dark.gif", "fox.gif", "fox_dark.gif"):
                     durations, decoded = [], []
                     for i in range(gif.n_frames):
                         gif.seek(i)

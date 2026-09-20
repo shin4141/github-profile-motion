@@ -9,14 +9,21 @@ import subprocess
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 
 ROOT = Path(__file__).parent
-W, H = 580, 164
-STEP, X0, Y0 = 17, 40, 33
+W, H = 442, 126
+STEP, TILE, X0, Y0 = 15, 11, 12, 12
+CENTER = (TILE + 1) // 2
 HEADING = "Technical Boundary Audit & Repair for AI Systems"
 FRAME_MS = 80
 WALK_SPEED = 13
 EDGE_MARGIN = 31  # entire awake sprite and its shadow clear the right edge
 STRIDE = (W + 2*EDGE_MARGIN) / 24  # gait phase completes 24 cycles around a wrap
 B_PAUSE_FRAMES = 5
+THEMES = {
+    "light": {"background": (255, 255, 255), "empty": (235, 237, 240),
+              "shadow": (173, 187, 177)},
+    "dark": {"background": (13, 17, 23), "empty": (22, 27, 34),
+             "shadow": (48, 67, 54)},
+}
 
 
 def font(size, bold=False):
@@ -91,24 +98,17 @@ def activity_grid(data):
              for row in range(7)] for col in range(28)]
 
 
-def base_frame(username, data, accent):
-    bg = (17, 23, 37)
+def base_frame(data, accent, theme):
+    bg = THEMES[theme]["background"]
     im = Image.new("RGB", (W, H), bg)
     d = ImageDraw.Draw(im)
-    d.rounded_rectangle((1, 1, W-2, H-2), radius=16, outline=(59, 72, 95), width=2)
-    d.text((X0, 9), "@" + username, fill=(232, 239, 249), font=font(15, True))
-    d.text((W-112, 11), "ACTIVITY", fill=(170, 185, 203), font=font(11, True))
     grid = activity_grid(data)
-    shades = [(39, 49, 68), blend((45, 56, 73), accent, .29),
-              blend((45, 56, 73), accent, .48), blend((45, 56, 73), accent, .72), accent]
     for col in range(28):
         for row in range(7):
             n = grid[col][row]
-            level = 0 if n == 0 else 1 if n < 3 else 2 if n < 6 else 3 if n < 10 else 4
             x, y = X0 + col*STEP, Y0 + row*STEP
-            d.rounded_rectangle((x, y, x+12, y+12), radius=3, fill=shades[level])
-    d.text((X0, 148), data.get("observed_at", "sample")[:10] + " snapshot  ·  glow = illustration, counts unchanged",
-           fill=(161, 178, 199), font=font(10))
+            d.rounded_rectangle((x, y, x+TILE, y+TILE), radius=2,
+                                fill=square_color(n, accent, theme))
     return im, grid
 
 
@@ -134,9 +134,9 @@ def position(target, t):
     return target[1]
 
 
-def touch_frames(config, data, seed, asset_root=ROOT):
-    accent, glow = color(config["accent"]), color(config["glow"])
-    base, grid = base_frame(config["username"], data, accent)
+def touch_frames(config, data, seed, asset_root=ROOT, theme="light"):
+    accent, glow = palette_colors(config, theme)
+    base, grid = base_frame(data, accent, theme)
     targets = target_points(grid, seed)
     icon = Image.open(asset_root / config["icon"]).convert("RGBA")
     icon.thumbnail((51, 51), Image.Resampling.LANCZOS)
@@ -146,7 +146,7 @@ def touch_frames(config, data, seed, asset_root=ROOT):
         for visit, (start, end) in enumerate(((17, 27), (50, 60))):
             if start <= t <= end:
                 c, r = targets[visit]
-                x, y = X0 + c*STEP+6, Y0 + r*STEP+6
+                x, y = X0 + c*STEP+CENTER, Y0 + r*STEP+CENTER
                 power = max(0, 1-abs(t-(start+end)/2)/((end-start)/2))
                 d.ellipse((x-14, y-14, x+14, y+14), fill=(*glow, int(35*power)))
                 d.rounded_rectangle((x-6, y-6, x+6, y+6), radius=3,
@@ -181,13 +181,13 @@ def scene_stops(grid, seed):
 
 def shock_plan(grid, seed, stop):
     """One fixed per-cell motion plan: radial launch, irregular voluntary return."""
-    cx, cy = X0 + stop[0]*STEP + 6, Y0 + stop[1]*STEP - 17
+    cx, cy = X0 + stop[0]*STEP + CENTER, Y0 + stop[1]*STEP - 17
     plan = []
     for col in range(28):
         for row in range(7):
             x, y = X0 + col*STEP, Y0 + row*STEP
             rng = random.Random(f"{seed}:{col}:{row}")
-            dx, dy = x+6-cx, y+6-cy
+            dx, dy = x+CENTER-cx, y+CENTER-cy
             dist = math.hypot(dx, dy)
             if dist < 3:
                 angle = rng.random()*math.tau
@@ -197,6 +197,10 @@ def shock_plan(grid, seed, stop):
             tangent = rng.uniform(-9, 9)
             ox = dx/dist*reach - dy/dist*tangent
             oy = dy/dist*reach + dx/dist*tangent
+            # The tighter, frameless canvas keeps every launched tile in view.
+            # A small reserve also covers the subpixel return hesitation.
+            ox = max(7-x, min(W-TILE-7-x, ox))
+            oy = max(7-y, min(H-TILE-7-y, oy))
             launch = 27 + min(8, int(dist/35))
             return_start = 46 + rng.randrange(0, 17)
             return_duration = 12 + rng.randrange(0, 14)
@@ -228,22 +232,26 @@ def cell_position(cell, t):
             cell["y"] + cell["oy"]*amount - wiggle)
 
 
-def shock_background(username, data):
-    im = Image.new("RGB", (W, H), (17, 23, 37))
-    d = ImageDraw.Draw(im)
-    d.rounded_rectangle((1, 1, W-2, H-2), radius=16, outline=(59, 72, 95), width=2)
-    d.text((X0, 9), "@"+username, fill=(232, 239, 249), font=font(15, True))
-    d.text((W-112, 11), "ACTIVITY", fill=(170, 185, 203), font=font(11, True))
-    d.text((X0, 148), data.get("observed_at", "sample")[:10]
-           + " snapshot  ·  tile motion is decorative; counts unchanged",
-           fill=(161, 178, 199), font=font(10))
-    return im
+def shock_background(theme):
+    return Image.new("RGB", (W, H), THEMES[theme]["background"])
 
 
-def square_color(count, accent):
-    shades = [(39, 49, 68), blend((45, 56, 73), accent, .29),
-              blend((45, 56, 73), accent, .48),
-              blend((45, 56, 73), accent, .72), accent]
+def palette_colors(config, theme):
+    if theme not in THEMES:
+        raise ValueError("theme must be light or dark")
+    return (color(config.get("accent_" + theme, config["accent"])),
+            color(config.get("glow_" + theme, config["glow"])))
+
+
+def square_color(count, accent, theme):
+    empty = THEMES[theme]["empty"]
+    if theme == "light":
+        shades = [empty, blend(empty, accent, .35),
+                  blend(empty, accent, .59), blend(empty, accent, .82),
+                  blend(accent, (15, 35, 25), .26)]
+    else:
+        shades = [empty, blend(empty, accent, .28),
+                  blend(empty, accent, .52), blend(empty, accent, .76), accent]
     level = 0 if count == 0 else 1 if count < 3 else 2 if count < 6 else 3 if count < 10 else 4
     return shades[level]
 
@@ -285,7 +293,7 @@ def build_timeline(grid, seed):
     states = []
     stops = scene_stops(grid, seed)
     for scene, stop in enumerate(stops):
-        stop_x = X0+stop[0]*STEP+6
+        stop_x = X0+stop[0]*STEP+CENTER
         for x in enter_positions(stop_x):
             states.append(dict(scene=scene, stage="enter", x=x, stop=stop))
         for _ in range(3):
@@ -306,12 +314,12 @@ def build_timeline(grid, seed):
     return states
 
 
-def draw_creature(im, state, awake, sleeping, waking, specialized_sleep):
+def draw_creature(im, state, awake, sleeping, waking, specialized_sleep, theme):
     x = state["x"]
-    ground_y = Y0+3*STEP+6
+    ground_y = Y0+3*STEP+CENTER
     d = ImageDraw.Draw(im)
     d.ellipse((round(x-17), ground_y+8, round(x+17), ground_y+12),
-              fill=(29, 36, 52))
+              fill=THEMES[theme]["shadow"])
     stage = state["stage"]
     if stage in ("enter", "exit"):
         phase = walk_phase(x)
@@ -348,50 +356,51 @@ def draw_creature(im, state, awake, sleeping, waking, specialized_sleep):
                         lift=abs(stir))
 
 
-def shock_frames(config, data, seed, asset_root=ROOT):
+def shock_frames(config, data, seed, asset_root=ROOT, theme="light"):
     """One two-scene timeline: right exit, invisible wrap, left re-entry."""
-    accent, glow = color(config["accent"]), color(config["glow"])
+    accent, glow = palette_colors(config, theme)
     grid = activity_grid(data)
     states = build_timeline(grid, seed)
     plans = [shock_plan(grid, seed+scene*100003, stop)
              for scene, stop in enumerate(scene_stops(grid, seed))]
-    background = shock_background(config["username"], data)
+    background = shock_background(theme)
     awake = load_icon(config["icon"], asset_root)
     sleeping = load_icon(config["sleep_icon"], asset_root) if config.get("sleep_icon") else awake
     waking = load_icon(config["wake_icon"], asset_root) if config.get("wake_icon") else awake
     for state in states:
         im = background.copy()
         draw = ImageDraw.Draw(im)
-        stop_x = X0+state["stop"][0]*STEP+6
-        center_y = Y0+3*STEP+6-23
+        stop_x = X0+state["stop"][0]*STEP+CENTER
+        center_y = Y0+3*STEP+CENTER-23
         t = state.get("motion_t", 0)
         plan = plans[state["scene"]]
         for cell in plan:
             x, y = cell_position(cell, t)
             x, y = round(x), round(y)
-            draw.rounded_rectangle((x, y, x+12, y+12), radius=3,
-                                   fill=square_color(cell["count"], accent))
+            draw.rounded_rectangle((x, y, x+TILE, y+TILE), radius=2,
+                                   fill=square_color(cell["count"], accent, theme))
 
         # Same background and rendering on both scenes; only the shock center moves.
         for onset in (27, 31):
             age = t-onset
             if 0 <= age <= 15:
-                radius = 5+age*13
+                radius_x = min(stop_x-5, W-stop_x-5, 90, 5+age*9)
+                radius_y = min(center_y-5, H-center_y-5, 5+age*3)
                 strength = (1-age/16)*.75
-                ring = blend((17, 23, 37), glow, strength)
-                draw.ellipse((stop_x-radius, center_y-radius,
-                              stop_x+radius, center_y+radius),
+                ring = blend(THEMES[theme]["background"], glow, strength)
+                draw.ellipse((stop_x-radius_x, center_y-radius_y,
+                              stop_x+radius_x, center_y+radius_y),
                              outline=ring, width=3 if age < 9 else 2)
         draw_creature(im, state, awake, sleeping, waking,
-                      bool(config.get("sleep_icon")))
+                      bool(config.get("sleep_icon")), theme)
         yield im
 
 
-def frames(config, data, seed, pattern="shock", asset_root=ROOT):
+def frames(config, data, seed, pattern="shock", asset_root=ROOT, theme="light"):
     if pattern == "shock":
-        return shock_frames(config, data, seed, asset_root)
+        return shock_frames(config, data, seed, asset_root, theme)
     if pattern == "touch":
-        return touch_frames(config, data, seed, asset_root)
+        return touch_frames(config, data, seed, asset_root, theme)
     raise ValueError("pattern must be shock or touch")
 
 
@@ -441,6 +450,8 @@ def main():
     parser.add_argument("--seed", type=int, default=216)
     parser.add_argument("--pattern", choices=("shock", "touch"), default="shock",
                         help="Main shock/sleep loop, or retained touch/glow variant")
+    parser.add_argument("--theme", choices=("light", "dark"), default="light",
+                        help="Match the GitHub README light or dark appearance")
     parser.add_argument("--out", type=Path, help="Output activity GIF")
     parser.add_argument("--heading-out", type=Path, help="Output heading GIF")
     parser.add_argument("--heading-mobile-out", type=Path, help="Output two-line narrow-screen heading GIF")
@@ -475,7 +486,7 @@ def main():
         if data["username"] != config["username"]:
             parser.error("activity username does not match config")
         gif(frames(config, data, args.seed, args.pattern,
-                   asset_root=args.config.resolve().parent), args.out,
+                   asset_root=args.config.resolve().parent, theme=args.theme), args.out,
             FRAME_MS if args.pattern == "shock" else 100)
 
 
