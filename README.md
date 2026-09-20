@@ -11,6 +11,10 @@ Self-contained GIFs for a GitHub profile README. The animated squares are an ill
 
 An [alternative fox, one-image character and warm palette](fox.gif) uses the same renderer. These checked-in GIFs are **fixed examples**: the cat uses a public `shin4141` snapshot captured on 2026-09-20; the fox uses **synthetic** counts. Neither is a live graph or a claim about today's activity.
 
+## Daily updates in your profile
+
+Use the [profile starter](starter/README.md): copy its workflow, JSON and ready-to-use icon into your `YOUR_LOGIN/YOUR_LOGIN` repository, add the marked README snippet, change your username, then enable Actions and run it once. Replace the icon and colors whenever you like. The workflow refreshes your real contribution snapshot daily and on demand. It commits the new GIF and a cache-busting README link **only after** capture and rendering succeed; failure leaves the last public GIF intact. It uses the caller repository's `GITHUB_TOKEN` with `contents: write`, not a cross-repository personal token.
+
 ## Make one with your character
 
 Python 3.10+ is required. Clone this repository, then run the following from its root:
@@ -41,7 +45,7 @@ python render.py --capture my-activity.json --username YOUR_LOGIN
 python render.py --config my-config.json --activity my-activity.json --out my-profile.gif
 ```
 
-Capture defaults to the last 196 UTC calendar days; use `--from-date YYYY-MM-DD --to-date YYYY-MM-DD` to set the range explicitly. Re-run these two commands whenever you want a new static snapshot/GIF, then commit the new GIF to the repository that serves your profile. The capture JSON includes `observed_at`; review it before publishing. Public counts can differ from what you expect because of GitHub's contribution and privacy rules. `--sample` is synthetic and never queries GitHub; `--capture` is the authenticated real-data path. There is no scheduled service or automatic update.
+Capture defaults to the last 196 UTC calendar days; use `--from-date YYYY-MM-DD --to-date YYYY-MM-DD` to set the range explicitly. Re-run these two commands whenever you want a new static snapshot/GIF, then commit the new GIF to the repository that serves your profile. The capture JSON includes `observed_at`; review it before publishing. Public counts can differ from what you expect because of GitHub's contribution and privacy rules. `--sample` is synthetic and never queries GitHub; `--capture` is the authenticated real-data path. These local commands do not schedule updates; the [starter workflow](starter/README.md) does.
 
 Commit `my-profile.gif` to your special `YOUR_LOGIN/YOUR_LOGIN` profile repository and put this in its `README.md`:
 
@@ -57,5 +61,8 @@ If the GIF stays in this repository instead, reference an immutable commit, for 
 - `cat.json` plus `crowned_cat*.png` are the ready-to-run character; `fox.json` and `fox.png` demonstrate one-image substitution. `make_icons.py` regenerates these original small icons.
 - `shin_activity_2026-09-20.json` is a frozen public GitHub GraphQL snapshot; `example_activity.json` is explicitly synthetic. Each activity file contains a `username` and `days` entries with `date` and nonnegative integer `count`; the username must match the config. Rendering does not modify input counts.
 - `test_render.py` checks stable frames, two-scene continuity, input preservation, and alternate-icon output. Run `python -m unittest -v test_render` after installing dependencies.
+- `update_profile.py` and its tests prepare a validated, real-data GIF plus a dated README link; the [reusable workflow](.github/workflows/render-profile.yml) commits both in the caller's profile repository. A failure produces a failed Actions run, not a silent synthetic image.
+
+The [daily refresh rollout record](DAILY_REFRESH_ROLLOUT.md) describes impact and rollback without changing the fixed V216 examples.
 
 Code and original included artwork are available under [MIT](LICENSE). The renderer, config, icons, examples, and tests were extracted from [Decision-OS V13 LoopKit at `a3c3e6633b13684adc08beab28883a57b11d5cbb`](https://github.com/shin4141/decision-os-v13-loopkit/tree/a3c3e6633b13684adc08beab28883a57b11d5cbb/examples/profile_motion); that repository holds the design/decision history and [Aspire entry](https://github.com/shin4141/decision-os-v13-loopkit). This repository is the canonical place for future generator changes. See the [live example on Shin's profile](https://github.com/shin4141).

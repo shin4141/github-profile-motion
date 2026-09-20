@@ -134,11 +134,11 @@ def position(target, t):
     return target[1]
 
 
-def touch_frames(config, data, seed):
+def touch_frames(config, data, seed, asset_root=ROOT):
     accent, glow = color(config["accent"]), color(config["glow"])
     base, grid = base_frame(config["username"], data, accent)
     targets = target_points(grid, seed)
-    icon = Image.open(ROOT / config["icon"]).convert("RGBA")
+    icon = Image.open(asset_root / config["icon"]).convert("RGBA")
     icon.thumbnail((51, 51), Image.Resampling.LANCZOS)
     for t in range(66):
         im = base.copy()
@@ -248,8 +248,8 @@ def square_color(count, accent):
     return shades[level]
 
 
-def load_icon(path):
-    icon = Image.open(ROOT / path).convert("RGBA")
+def load_icon(path, asset_root=ROOT):
+    icon = Image.open(asset_root / path).convert("RGBA")
     icon.thumbnail((53, 53), Image.Resampling.LANCZOS)
     return icon
 
@@ -348,7 +348,7 @@ def draw_creature(im, state, awake, sleeping, waking, specialized_sleep):
                         lift=abs(stir))
 
 
-def shock_frames(config, data, seed):
+def shock_frames(config, data, seed, asset_root=ROOT):
     """One two-scene timeline: right exit, invisible wrap, left re-entry."""
     accent, glow = color(config["accent"]), color(config["glow"])
     grid = activity_grid(data)
@@ -356,9 +356,9 @@ def shock_frames(config, data, seed):
     plans = [shock_plan(grid, seed+scene*100003, stop)
              for scene, stop in enumerate(scene_stops(grid, seed))]
     background = shock_background(config["username"], data)
-    awake = load_icon(config["icon"])
-    sleeping = load_icon(config["sleep_icon"]) if config.get("sleep_icon") else awake
-    waking = load_icon(config["wake_icon"]) if config.get("wake_icon") else awake
+    awake = load_icon(config["icon"], asset_root)
+    sleeping = load_icon(config["sleep_icon"], asset_root) if config.get("sleep_icon") else awake
+    waking = load_icon(config["wake_icon"], asset_root) if config.get("wake_icon") else awake
     for state in states:
         im = background.copy()
         draw = ImageDraw.Draw(im)
@@ -387,11 +387,11 @@ def shock_frames(config, data, seed):
         yield im
 
 
-def frames(config, data, seed, pattern="shock"):
+def frames(config, data, seed, pattern="shock", asset_root=ROOT):
     if pattern == "shock":
-        return shock_frames(config, data, seed)
+        return shock_frames(config, data, seed, asset_root)
     if pattern == "touch":
-        return touch_frames(config, data, seed)
+        return touch_frames(config, data, seed, asset_root)
     raise ValueError("pattern must be shock or touch")
 
 
@@ -474,7 +474,8 @@ def main():
         data = json.loads(args.activity.read_text())
         if data["username"] != config["username"]:
             parser.error("activity username does not match config")
-        gif(frames(config, data, args.seed, args.pattern), args.out,
+        gif(frames(config, data, args.seed, args.pattern,
+                   asset_root=args.config.resolve().parent), args.out,
             FRAME_MS if args.pattern == "shock" else 100)
 
 
