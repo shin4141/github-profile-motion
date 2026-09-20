@@ -34,9 +34,12 @@ class DailyUpdateTest(unittest.TestCase):
 
     def real_capture(self, username, output, start, end):
         self.assertEqual((username, end), ("example-user", "2026-09-20"))
-        begin = NOW.date() - timedelta(days=195)
+        begin = NOW.date() - timedelta(days=update_profile.render.WINDOW_DAYS-1)
+        self.assertEqual(start, begin.isoformat())
         days = [{"date": (begin+timedelta(days=n)).isoformat(),
-                 "count": n % 8} for n in range(196)]
+                 "count": n % 8,
+                 "level": "NONE" if n % 8 == 0 else "FIRST_QUARTILE"}
+                for n in range(update_profile.render.WINDOW_DAYS)]
         output.write_text(json.dumps({
             "username": username, "source": update_profile.SOURCE,
             "observed_at": "2026-09-20T03:00:00Z", "days": days,
@@ -61,11 +64,42 @@ class DailyUpdateTest(unittest.TestCase):
         self.assertIn("Contact: mailto:hello@example.com", text)
         self.assertEqual(text.count(update_profile.BEGIN), 1)
         with Image.open(self.root / "profile-motion.gif") as gif:
-            self.assertEqual(gif.size, (442, 126))
+            self.assertEqual(gif.size, (update_profile.render.W, update_profile.render.H))
             self.assertGreater(gif.n_frames, 200)
         with Image.open(self.root / "profile-motion-dark.gif") as gif:
-            self.assertEqual(gif.size, (442, 126))
+            self.assertEqual(gif.size, (update_profile.render.W, update_profile.render.H))
             self.assertGreater(gif.n_frames, 200)
+
+    def test_incomplete_year_preserves_previous_public_files(self):
+        def incomplete(*args):
+            self.real_capture(*args)
+            path = args[1]
+            payload = json.loads(path.read_text())
+            payload["days"].pop(100)
+            path.write_text(json.dumps(payload))
+        with self.assertRaisesRegex(ValueError, "365 dated"):
+            self.run_update(incomplete)
+        self.assertEqual((self.root / "README.md").read_text(), self.before)
+        self.assertEqual((self.root / "profile-motion.gif").read_bytes(),
+                         b"previous good GIF")
+        self.assertEqual((self.root / "profile-motion-dark.gif").read_bytes(),
+                         b"previous good dark GIF")
+
+    def test_missing_relative_levels_preserves_previous_public_files(self):
+        def no_levels(*args):
+            self.real_capture(*args)
+            path = args[1]
+            payload = json.loads(path.read_text())
+            for day in payload["days"]:
+                day.pop("level")
+            path.write_text(json.dumps(payload))
+        with self.assertRaisesRegex(ValueError, "needs GitHub contribution levels"):
+            self.run_update(no_levels)
+        self.assertEqual((self.root / "README.md").read_text(), self.before)
+        self.assertEqual((self.root / "profile-motion.gif").read_bytes(),
+                         b"previous good GIF")
+        self.assertEqual((self.root / "profile-motion-dark.gif").read_bytes(),
+                         b"previous good dark GIF")
 
     def test_capture_failure_keeps_previous_public_files(self):
         def fail(*_):

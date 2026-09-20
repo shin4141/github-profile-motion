@@ -2,5 +2,7 @@
   "username": "YOUR_LOGIN",
   "icon": "your-icon.png",
   "accent": "#2da44e",
-  "glow": "#38b467"
+  "glow": "#38b467",
+  "accent_dark": "#56d364",
+  "glow_dark": "#7ee787"
 }
