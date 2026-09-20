@@ -77,7 +77,7 @@ def update(profile_root, config_name, readme_name, output_name, repository,
     # succeed before a single publishable file is modified.
     with tempfile.TemporaryDirectory(prefix="profile-motion-") as temporary:
         activity = Path(temporary) / "activity.json"
-        capture_fn(username, activity, (today-timedelta(days=195)).isoformat(),
+        capture_fn(username, activity, (today-timedelta(days=render.WINDOW_DAYS-1)).isoformat(),
                    today.isoformat())
         data = json.loads(activity.read_text(encoding="utf-8"))
         if data.get("username") != username or data.get("source") != SOURCE:
@@ -86,7 +86,9 @@ def update(profile_root, config_name, readme_name, output_name, repository,
         if observed.tzinfo is None or abs((observed-current).total_seconds()) > 1800:
             raise ValueError("Capture timestamp is missing or stale")
         days = sorted(date.fromisoformat(entry["date"]) for entry in data["days"])
-        render.activity_grid(data)  # uniqueness and nonnegative integer counts
+        render.activity_grid(data)  # exact 365 dates and nonnegative integer counts
+        if render.activity_levels(data) is None:
+            raise ValueError("Real capture needs GitHub contribution levels")
         if not days or days[-1] < today-timedelta(days=1) or days[-1] > today:
             raise ValueError("Capture does not reach the current contribution window")
 

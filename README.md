@@ -1,6 +1,6 @@
 # GitHub Profile Motion
 
-Compact light/dark GIFs: a character moves through a GitHub-like contribution grid. They illustrate a dated snapshot; GitHub's native graph is untouched.
+Full-year light/dark GIFs: a character moves through a GitHub-like contribution grid. They illustrate a dated real-data snapshot; GitHub's native graph is untouched.
 
 <picture>
   <source media="(max-width: 600px)" srcset="heading_mobile.gif">
@@ -12,7 +12,7 @@ Compact light/dark GIFs: a character moves through a GitHub-like contribution gr
   <img src="crowned_cat.gif" alt="A crowned black cat crosses two green activity scenes, rests, wakes, and loops">
 </picture>
 
-The cat uses a **fixed** `shin4141` snapshot from 2026-09-20. The [one-image fox alternative](fox.gif) uses **synthetic** counts and a custom warm palette; [dark version](fox_dark.gif). Both keep the same compact frameless grid.
+The cat uses a **fixed 365-day** `shin4141` snapshot from 2026-09-20. Its 53-week grid has one cell per recorded day, plus only the blank partial-week padding needed for a Sunday–Saturday calendar. Real captures include GitHub's relative contribution level for each date, so the default green shades follow the native graph while preserving the actual counts. The [one-image fox alternative](fox.gif) uses **synthetic** counts and a custom warm palette; [dark version](fox_dark.gif).
 
 ## Daily updates in your profile
 
@@ -51,7 +51,7 @@ python render.py --config my-config.json --activity my-activity.json --out my-pr
 python render.py --config my-config.json --activity my-activity.json --theme dark --out my-profile-dark.gif
 ```
 
-Capture defaults to the last 196 UTC calendar days; use `--from-date YYYY-MM-DD --to-date YYYY-MM-DD` to set the range explicitly. Re-run these two commands whenever you want a new static snapshot/GIF, then commit the new GIF to the repository that serves your profile. The capture JSON includes `observed_at`; review it before publishing. Public counts can differ from what you expect because of GitHub's contribution and privacy rules. `--sample` is synthetic and never queries GitHub; `--capture` is the authenticated real-data path. These local commands do not schedule updates; the [starter workflow](starter/README.md) does.
+Capture defaults to the last 365 UTC calendar days; use `--from-date YYYY-MM-DD --to-date YYYY-MM-DD` to set the range explicitly. Rendering requires 365 consecutive dated entries and never turns an absent date into a zero-contribution claim. Re-run these two commands whenever you want a new static snapshot/GIF, then commit the new GIF to the repository that serves your profile. The capture JSON includes `observed_at`, counts, and GitHub's relative color levels; review it before publishing. Public counts can differ from what you expect because of GitHub's contribution and privacy rules. `--sample` is synthetic and never queries GitHub; `--capture` is the authenticated real-data path. These local commands do not schedule updates; the [starter workflow](starter/README.md) does.
 
 Commit both GIFs to your special `YOUR_LOGIN/YOUR_LOGIN` profile repository and put this in its `README.md`:
 
@@ -66,7 +66,7 @@ If the GIF stays in this repository instead, reference an immutable commit, for 
 
 ## What is included
 
-- `render.py` makes deterministic, script-free light/dark GIFs from an icon, palette, seed, and dated JSON. The two-scene `shock` loop is the default. `--pattern touch` is a retained alternate, not another required sprite set.
+- `render.py` makes deterministic, script-free light/dark GIFs from an icon, palette, seed, and 365-day dated JSON. The two-scene `shock` loop is the default. `--pattern touch` is a retained alternate, not another required sprite set.
 - `cat.json` plus `crowned_cat*.png` are the ready-to-run character; `fox.json` and `fox.png` demonstrate one-image substitution. `make_icons.py` regenerates these original small icons.
 - `shin_activity_2026-09-20.json` is a frozen public GitHub GraphQL snapshot; `example_activity.json` is explicitly synthetic. Each activity file contains a `username` and `days` entries with `date` and nonnegative integer `count`; the username must match the config. Rendering does not modify input counts.
 - `test_render.py` checks stable frames, two-scene continuity, input preservation, and alternate-icon output. Run `python -m unittest -v test_render` after installing dependencies.

@@ -9,21 +9,24 @@ import subprocess
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 
 ROOT = Path(__file__).parent
-W, H = 442, 126
-STEP, TILE, X0, Y0 = 15, 11, 12, 12
+W, H = 846, 148
+COLS, ROWS, WINDOW_DAYS = 53, 7, 365
+STEP, TILE, X0, Y0 = 15, 11, 34, 32
 CENTER = (TILE + 1) // 2
 HEADING = "Technical Boundary Audit & Repair for AI Systems"
 FRAME_MS = 80
-WALK_SPEED = 13
+WALK_SPEED = 17
 EDGE_MARGIN = 31  # entire awake sprite and its shadow clear the right edge
 STRIDE = (W + 2*EDGE_MARGIN) / 24  # gait phase completes 24 cycles around a wrap
 B_PAUSE_FRAMES = 5
 THEMES = {
-    "light": {"background": (255, 255, 255), "empty": (235, 237, 240),
+    "light": {"background": (255, 255, 255), "empty": (239, 242, 245),
               "shadow": (173, 187, 177)},
-    "dark": {"background": (13, 17, 23), "empty": (22, 27, 34),
+    "dark": {"background": (13, 17, 23), "empty": (21, 27, 35),
              "shadow": (48, 67, 54)},
 }
+LEVEL_INDEX = {"NONE": 0, "FIRST_QUARTILE": 1, "SECOND_QUARTILE": 2,
+               "THIRD_QUARTILE": 3, "FOURTH_QUARTILE": 4}
 
 
 def font(size, bold=False):
@@ -54,7 +57,7 @@ def capture(username, output, start, end):
     query = ("query { user(login: " + json.dumps(username) + ") { "
              "contributionsCollection(from: " + json.dumps(start + "T00:00:00Z") + ", to: "
              + json.dumps(end + "T23:59:59Z") + ") { contributionCalendar { weeks { "
-             "contributionDays { date contributionCount } } } } } }")
+             "contributionDays { date contributionCount contributionLevel } } } } } }")
     result = subprocess.run(["gh", "api", "graphql", "-f", "query=" + query],
                             check=True, capture_output=True, text=True)
     response = json.loads(result.stdout)
@@ -64,7 +67,8 @@ def capture(username, output, start, end):
     if user is None:
         raise ValueError("GitHub user not found or not accessible: " + username)
     weeks = user["contributionsCollection"]["contributionCalendar"]["weeks"]
-    days = [dict(date=day["date"], count=day["contributionCount"])
+    days = [dict(date=day["date"], count=day["contributionCount"],
+                 level=day["contributionLevel"])
             for week in weeks for day in week["contributionDays"]]
     payload = {"username": username, "source": "GitHub GraphQL contributionsCollection snapshot",
                "observed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "days": days}
@@ -74,9 +78,9 @@ def capture(username, output, start, end):
 def sample(username, output):
     """Explicitly synthetic activity for testing customization, never real data."""
     from datetime import date, timedelta
-    start = date(2026, 3, 8)
+    start = date(2025, 9, 21)
     days = [dict(date=(start+timedelta(days=i)).isoformat(),
-                 count=(i*7 % 13 if i % 4 else 0)) for i in range(196)]
+                 count=(i*7 % 13 if i % 4 else 0)) for i in range(WINDOW_DAYS)]
     payload = {"username": username, "source": "SYNTHETIC example, not a GitHub contribution claim",
                "observed_at": "synthetic", "days": days}
     output.write_text(json.dumps(payload, indent=2) + "\n")
@@ -86,16 +90,52 @@ def activity_grid(data):
     entries = {d["date"]: d["count"] for d in data["days"]}
     if len(entries) != len(data["days"]) or any(type(v) is not int or v < 0 for v in entries.values()):
         raise ValueError("Activity dates must be unique, with nonnegative integer counts")
-    # Input is a dated snapshot. Explicitly render only its final 28 calendar weeks.
     dates = sorted(entries)
-    if not dates:
-        raise ValueError("No activity days")
-    from datetime import date, timedelta
+    if len(dates) != WINDOW_DAYS:
+        raise ValueError("A full year needs 365 dated activity entries")
     end = date.fromisoformat(dates[-1])
-    sunday = end - timedelta(days=(end.weekday()+1) % 7)
-    first = sunday - timedelta(weeks=27)
-    return [[entries.get((first + timedelta(weeks=col, days=row)).isoformat(), 0)
-             for row in range(7)] for col in range(28)]
+    start = end - timedelta(days=WINDOW_DAYS-1)
+    if dates != [(start + timedelta(days=i)).isoformat() for i in range(WINDOW_DAYS)]:
+        raise ValueError("Activity dates must cover each of the last 365 days without gaps")
+    first = start - timedelta(days=(start.weekday()+1) % 7)
+    # None means a calendar padding day, never an invented zero contribution.
+    return [[entries.get((first + timedelta(weeks=col, days=row)).isoformat())
+             for row in range(ROWS)] for col in range(COLS)]
+
+
+def activity_levels(data):
+    days = data["days"]
+    present = ["level" in day for day in days]
+    if not any(present):
+        return None  # synthetic or user-supplied snapshots retain count-based color.
+    if not all(present):
+        raise ValueError("Contribution levels must be present for every dated day")
+    for day in days:
+        level = day["level"]
+        if not isinstance(level, str) or level not in LEVEL_INDEX or (day["count"] == 0) != (level == "NONE"):
+            raise ValueError("Invalid GitHub contribution level for dated count")
+    entries = {day["date"]: day["level"] for day in days}
+    first_date = date.fromisoformat(min(entries))
+    first = first_date - timedelta(days=(first_date.weekday()+1) % 7)
+    return [[entries.get((first + timedelta(weeks=col, days=row)).isoformat())
+             for row in range(ROWS)] for col in range(COLS)]
+
+
+def draw_calendar_labels(im, data, theme):
+    draw = ImageDraw.Draw(im)
+    first_date = date.fromisoformat(min(day["date"] for day in data["days"]))
+    first = first_date - timedelta(days=(first_date.weekday()+1) % 7)
+    muted = (87, 96, 106) if theme == "light" else (139, 148, 158)
+    previous_month = None
+    for col in range(COLS):
+        week = first + timedelta(weeks=col)
+        month = (week.year, week.month)
+        if month != previous_month:
+            draw.text((X0 + col*STEP, 8), week.strftime("%b"),
+                      fill=muted, font=font(11))
+            previous_month = month
+    for row, label in ((1, "Mon"), (3, "Wed"), (5, "Fri")):
+        draw.text((4, Y0 + row*STEP), label, fill=muted, font=font(10))
 
 
 def base_frame(data, accent, theme):
@@ -103,19 +143,25 @@ def base_frame(data, accent, theme):
     im = Image.new("RGB", (W, H), bg)
     d = ImageDraw.Draw(im)
     grid = activity_grid(data)
-    for col in range(28):
-        for row in range(7):
+    levels = activity_levels(data)
+    draw_calendar_labels(im, data, theme)
+    for col in range(COLS):
+        for row in range(ROWS):
             n = grid[col][row]
+            if n is None:
+                continue
             x, y = X0 + col*STEP, Y0 + row*STEP
             d.rounded_rectangle((x, y, x+TILE, y+TILE), radius=2,
-                                fill=square_color(n, accent, theme))
+                                fill=square_color(n, accent, theme,
+                                                  levels[col][row] if levels else None))
     return im, grid
 
 
 def target_points(grid, seed):
-    active = [(c, r) for c in range(2, 27) for r in range(1, 6) if grid[c][r] > 0]
+    active = [(c, r) for c in range(4, COLS-4) for r in range(1, 6)
+              if (grid[c][r] or 0) > 0]
     if not active:
-        active = [(8, 3), (21, 4)]
+        active = [(19, 3), (38, 4)]
     rng = random.Random(seed)
     first = rng.choice(active[:max(1, len(active)//2)])
     second = rng.choice(active[max(1, len(active)//2):] or active)
@@ -124,7 +170,7 @@ def target_points(grid, seed):
 
 def position(target, t):
     # Two visits: approach, touch/glow, pause; common motion for any icon.
-    anchors = [(0, (10, 3)), (13, target[0]), (20, target[0]),
+    anchors = [(0, (19, 3)), (13, target[0]), (20, target[0]),
                (31, target[0]), (45, target[1]), (53, target[1]), (65, target[1])]
     for (f0, p0), (f1, p1) in zip(anchors, anchors[1:]):
         if t <= f1:
@@ -170,21 +216,23 @@ def smoothstep(value):
 
 def scene_stops(grid, seed):
     """Choose separate left-of-center and right-side squares at one gait height."""
-    ranges = (range(8, 13), range(19, 23))
+    ranges = (range(18, 24), range(35, 41))
     stops = []
     for scene, columns in enumerate(ranges):
-        active = [(col, 3) for col in columns if grid[col][3] > 0]
+        active = [(col, 3) for col in columns if (grid[col][3] or 0) > 0]
         stops.append(random.Random(f"{seed}:stop:{scene}").choice(
             active or [(list(columns)[len(columns)//2], 3)]))
     return stops
 
 
-def shock_plan(grid, seed, stop):
+def shock_plan(grid, seed, stop, levels=None):
     """One fixed per-cell motion plan: radial launch, irregular voluntary return."""
     cx, cy = X0 + stop[0]*STEP + CENTER, Y0 + stop[1]*STEP - 17
     plan = []
-    for col in range(28):
-        for row in range(7):
+    for col in range(COLS):
+        for row in range(ROWS):
+            if grid[col][row] is None:
+                continue
             x, y = X0 + col*STEP, Y0 + row*STEP
             rng = random.Random(f"{seed}:{col}:{row}")
             dx, dy = x+CENTER-cx, y+CENTER-cy
@@ -204,7 +252,8 @@ def shock_plan(grid, seed, stop):
             launch = 27 + min(8, int(dist/35))
             return_start = 46 + rng.randrange(0, 17)
             return_duration = 12 + rng.randrange(0, 14)
-            plan.append(dict(col=col, row=row, count=grid[col][row], x=x, y=y,
+            plan.append(dict(col=col, row=row, count=grid[col][row],
+                             level=levels[col][row] if levels else None, x=x, y=y,
                              ox=ox, oy=oy, launch=launch,
                              return_start=return_start,
                              return_end=return_start+return_duration,
@@ -243,29 +292,39 @@ def palette_colors(config, theme):
             color(config.get("glow_" + theme, config["glow"])))
 
 
-def square_color(count, accent, theme):
+def square_color(count, accent, theme, level=None):
     empty = THEMES[theme]["empty"]
     if theme == "light":
         shades = [empty, blend(empty, accent, .35),
                   blend(empty, accent, .59), blend(empty, accent, .82),
                   blend(accent, (15, 35, 25), .26)]
+        if accent == (45, 164, 78):
+            shades = [empty, (172, 238, 187), (74, 194, 107),
+                      (45, 164, 78), (17, 99, 41)]
     else:
         shades = [empty, blend(empty, accent, .28),
                   blend(empty, accent, .52), blend(empty, accent, .76), accent]
-    level = 0 if count == 0 else 1 if count < 3 else 2 if count < 6 else 3 if count < 10 else 4
-    return shades[level]
+        if accent == (86, 211, 100):
+            shades = [empty, (3, 58, 22), (25, 108, 46),
+                      (46, 160, 67), (86, 211, 100)]
+    index = (LEVEL_INDEX[level] if level is not None else
+             0 if count == 0 else 1 if count < 3 else 2 if count < 6 else
+             3 if count < 10 else 4)
+    return shades[index]
 
 
 def load_icon(path, asset_root=ROOT):
     icon = Image.open(asset_root / path).convert("RGBA")
-    icon.thumbnail((53, 53), Image.Resampling.LANCZOS)
+    icon.thumbnail((64, 64), Image.Resampling.LANCZOS)
     return icon
 
 
 def creature_at(frame, icon, x, ground_y, angle=0, scale=1, lift=0):
-    size = (max(1, round(icon.width*scale)), max(1, round(icon.height*scale)))
-    sprite = icon.resize(size, Image.Resampling.LANCZOS)
-    sprite = sprite.rotate(angle, Image.Resampling.BICUBIC, expand=True)
+    size = (max(1, min(icon.width, round(min(icon.width, 58)*scale))),
+            max(1, min(icon.height, round(min(icon.height, 58)*scale))))
+    sprite = icon if size == icon.size else icon.resize(size, Image.Resampling.LANCZOS)
+    if angle:
+        sprite = sprite.rotate(angle, Image.Resampling.BICUBIC, expand=True)
     frame.paste(sprite, (round(x-sprite.width/2), round(ground_y-sprite.height+12-lift)), sprite)
 
 
@@ -360,10 +419,12 @@ def shock_frames(config, data, seed, asset_root=ROOT, theme="light"):
     """One two-scene timeline: right exit, invisible wrap, left re-entry."""
     accent, glow = palette_colors(config, theme)
     grid = activity_grid(data)
+    levels = activity_levels(data)
     states = build_timeline(grid, seed)
-    plans = [shock_plan(grid, seed+scene*100003, stop)
+    plans = [shock_plan(grid, seed+scene*100003, stop, levels)
              for scene, stop in enumerate(scene_stops(grid, seed))]
     background = shock_background(theme)
+    draw_calendar_labels(background, data, theme)
     awake = load_icon(config["icon"], asset_root)
     sleeping = load_icon(config["sleep_icon"], asset_root) if config.get("sleep_icon") else awake
     waking = load_icon(config["wake_icon"], asset_root) if config.get("wake_icon") else awake
@@ -378,14 +439,15 @@ def shock_frames(config, data, seed, asset_root=ROOT, theme="light"):
             x, y = cell_position(cell, t)
             x, y = round(x), round(y)
             draw.rounded_rectangle((x, y, x+TILE, y+TILE), radius=2,
-                                   fill=square_color(cell["count"], accent, theme))
+                                   fill=square_color(cell["count"], accent, theme,
+                                                     cell["level"]))
 
         # Same background and rendering on both scenes; only the shock center moves.
         for onset in (27, 31):
             age = t-onset
             if 0 <= age <= 15:
-                radius_x = min(stop_x-5, W-stop_x-5, 90, 5+age*9)
-                radius_y = min(center_y-5, H-center_y-5, 5+age*3)
+                radius_x = min(stop_x-5, W-stop_x-5, 100, 5+age*9)
+                radius_y = min(center_y-(Y0-5), H-center_y-5, 5+age*3)
                 strength = (1-age/16)*.75
                 ring = blend(THEMES[theme]["background"], glow, strength)
                 draw.ellipse((stop_x-radius_x, center_y-radius_y,
@@ -458,7 +520,7 @@ def main():
     parser.add_argument("--capture", type=Path, help="Capture dated GraphQL snapshot to path, then stop")
     parser.add_argument("--username", help="Username for --capture")
     parser.add_argument("--sample", type=Path, help="Write synthetic activity for --username, then stop")
-    parser.add_argument("--from-date", help="Snapshot start, YYYY-MM-DD (default: 195 days before today, UTC)")
+    parser.add_argument("--from-date", help="Snapshot start, YYYY-MM-DD (default: 364 days before today, UTC)")
     parser.add_argument("--to-date", help="Snapshot end, YYYY-MM-DD (default: today, UTC)")
     args = parser.parse_args()
     if args.capture:
@@ -466,7 +528,7 @@ def main():
             parser.error("--capture needs --username")
         today = datetime.now(timezone.utc).date()
         capture(args.username, args.capture,
-                args.from_date or (today-timedelta(days=195)).isoformat(),
+                args.from_date or (today-timedelta(days=WINDOW_DAYS-1)).isoformat(),
                 args.to_date or today.isoformat())
         return
     if args.sample:

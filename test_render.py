@@ -1,6 +1,7 @@
 import json
 import hashlib
 import math
+from datetime import date, timedelta
 import unittest
 from unittest.mock import patch
 from tempfile import TemporaryDirectory
@@ -12,9 +13,9 @@ ROOT = Path(__file__).parent
 
 
 class RenderTest(unittest.TestCase):
-    def test_frameless_themes_and_flight_stay_inside_compact_canvas(self):
-        self.assertLess(render.H, 164)
-        self.assertLess(render.W, 580)
+    def test_frameless_themes_and_flight_stay_inside_full_year_canvas(self):
+        self.assertEqual((render.W, render.H), (846, 148))
+        self.assertEqual((render.COLS, render.ROWS), (53, 7))
         config = json.loads((ROOT / "cat.json").read_text())
         data = json.loads((ROOT / "shin_activity_2026-09-20.json").read_text())
         for theme in ("light", "dark"):
@@ -35,6 +36,42 @@ class RenderTest(unittest.TestCase):
                     self.assertGreaterEqual(y, 6.5)
                     self.assertLessEqual(y+render.TILE, render.H-6.5)
 
+    def test_year_grid_maps_real_dates_and_does_not_invent_padding_counts(self):
+        start = date(2025, 9, 24)  # Wednesday, not a convenient week boundary.
+        days = [{"date": (start+timedelta(days=i)).isoformat(), "count": i}
+                for i in range(render.WINDOW_DAYS)]
+        grid = render.activity_grid({"days": days})
+        self.assertEqual(grid[0][:3], [None, None, None])
+        self.assertEqual(grid[0][3], 0)
+        self.assertEqual(grid[0][4], 1)
+        self.assertEqual(grid[-1][3], 364)
+        self.assertEqual(grid[-1][4:], [None, None, None])
+        self.assertEqual(sum(value is not None for col in grid for value in col), 365)
+        with self.assertRaisesRegex(ValueError, "365 dated"):
+            render.activity_grid({"days": days[1:]})
+        broken = [dict(day) for day in days]
+        broken[100]["date"] = (start+timedelta(days=400)).isoformat()
+        with self.assertRaisesRegex(ValueError, "without gaps"):
+            render.activity_grid({"days": broken})
+
+    def test_github_relative_levels_map_to_native_shades_without_changing_counts(self):
+        data = json.loads((ROOT / "shin_activity_2026-09-20.json").read_text())
+        grid = render.activity_grid(data)
+        levels = render.activity_levels(data)
+        self.assertEqual(sum(level is not None for col in levels for level in col), 365)
+        for col in range(render.COLS):
+            for row in range(render.ROWS):
+                if grid[col][row] is None:
+                    self.assertIsNone(levels[col][row])
+                elif grid[col][row] == 0:
+                    self.assertEqual(levels[col][row], "NONE")
+                else:
+                    self.assertNotEqual(levels[col][row], "NONE")
+        self.assertEqual(render.square_color(50, (45, 164, 78), "light", "FIRST_QUARTILE"),
+                         (172, 238, 187))
+        self.assertEqual(render.square_color(1, (86, 211, 100), "dark", "FOURTH_QUARTILE"),
+                         (86, 211, 100))
+
     def test_profile_icon_can_live_beside_an_external_config(self):
         with TemporaryDirectory() as directory:
             asset_root = Path(directory)
@@ -49,7 +86,8 @@ class RenderTest(unittest.TestCase):
     def test_capture_writes_dated_public_snapshot_and_rejects_bad_dates(self):
         response = {"data": {"user": {"contributionsCollection": {
             "contributionCalendar": {"weeks": [{"contributionDays": [
-                {"date": "2026-09-19", "contributionCount": 3}
+                {"date": "2026-09-19", "contributionCount": 3,
+                 "contributionLevel": "SECOND_QUARTILE"}
             ]}]}}}}}
         with TemporaryDirectory() as directory:
             output = Path(directory) / "capture.json"
@@ -57,10 +95,12 @@ class RenderTest(unittest.TestCase):
                 run.return_value.stdout = json.dumps(response)
                 render.capture("example-user", output, "2026-09-19", "2026-09-20")
                 self.assertEqual(json.loads(output.read_text())["days"],
-                                 [{"date": "2026-09-19", "count": 3}])
+                                 [{"date": "2026-09-19", "count": 3,
+                                   "level": "SECOND_QUARTILE"}])
                 command = run.call_args.args[0]
                 self.assertEqual(command[:3], ["gh", "api", "graphql"])
                 self.assertIn('user(login: "example-user")', command[4])
+                self.assertIn("contributionLevel", command[4])
                 self.assertRaises(ValueError, render.capture, "example-user", output,
                                   "2026-09-20", "2026-09-19")
                 self.assertEqual(run.call_count, 1)
@@ -157,9 +197,10 @@ class RenderTest(unittest.TestCase):
         states = render.build_timeline(grid, 216)
         for scene, stop in enumerate(stops):
             plan = render.shock_plan(grid, 216+scene*100003, stop)
-            self.assertEqual(len(plan), 196)
+            self.assertEqual(len(plan), render.WINDOW_DAYS)
             self.assertEqual([cell["count"] for cell in plan],
-                             [grid[col][row] for col in range(28) for row in range(7)])
+                             [grid[col][row] for col in range(render.COLS)
+                              for row in range(render.ROWS) if grid[col][row] is not None])
             self.assertGreater(len({cell["return_start"] for cell in plan}), 10)
             self.assertGreater(len({cell["return_end"] for cell in plan}), 15)
             for t in (0, 87):
