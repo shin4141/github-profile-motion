@@ -1,7 +1,7 @@
 """Capture real GitHub contributions and stage one fail-closed profile update.
 
 Only the caller's repository is writable. The workflow commits and pushes the
-GIF and README together *after* this program returns successfully.
+light/dark GIFs and README together *after* this program returns successfully.
 """
 
 import argparse
@@ -39,15 +39,19 @@ def in_repository(root, name):
 
 
 def update(profile_root, config_name, readme_name, output_name, repository,
-           branch="main", capture_fn=render.capture, now=None):
+           branch="main", capture_fn=render.capture, now=None,
+           dark_output_name="profile-motion-dark.gif"):
     root = Path(profile_root).resolve()
     if not REPOSITORY.fullmatch(repository) or not BRANCH.fullmatch(branch):
         raise ValueError("Expected OWNER/REPO and a normal branch name")
     config_path = in_repository(root, config_name)
     readme_path = in_repository(root, readme_name)
     output_path = in_repository(root, output_name)
-    if output_path.suffix.lower() != ".gif":
-        raise ValueError("Output must be a GIF")
+    dark_output_path = in_repository(root, dark_output_name)
+    if (output_path.suffix.lower() != ".gif" or
+            dark_output_path.suffix.lower() != ".gif" or
+            output_path == dark_output_path):
+        raise ValueError("Light and dark outputs must be distinct GIF paths")
     config = json.loads(config_path.read_text(encoding="utf-8"))
     username = config["username"]
     if not isinstance(username, str) or not LOGIN.fullmatch(username):
@@ -73,7 +77,6 @@ def update(profile_root, config_name, readme_name, output_name, repository,
     # succeed before a single publishable file is modified.
     with tempfile.TemporaryDirectory(prefix="profile-motion-") as temporary:
         activity = Path(temporary) / "activity.json"
-        generated = Path(temporary) / "generated.gif"
         capture_fn(username, activity, (today-timedelta(days=195)).isoformat(),
                    today.isoformat())
         data = json.loads(activity.read_text(encoding="utf-8"))
@@ -87,32 +90,41 @@ def update(profile_root, config_name, readme_name, output_name, repository,
         if not days or days[-1] < today-timedelta(days=1) or days[-1] > today:
             raise ValueError("Capture does not reach the current contribution window")
 
-        render.gif(render.frames(config, data, 216, "shock", config_path.parent),
-                   generated, render.FRAME_MS)
-        with Image.open(generated) as result:
-            if result.size != (render.W, render.H) or result.n_frames < 2:
-                raise ValueError("Generated GIF has no usable animation")
-        gif_bytes = generated.read_bytes()
-        digest = hashlib.sha256(gif_bytes).hexdigest()[:16]
-        image_url = ("https://raw.githubusercontent.com/" + repository + "/" +
-                     quote(branch, safe="/") + "/" +
-                     quote(output_path.relative_to(root).as_posix(), safe="/") +
-                     "?v=" + digest)
+        images = {}
+        for theme, destination in (("light", output_path), ("dark", dark_output_path)):
+            generated = Path(temporary) / (theme + ".gif")
+            render.gif(render.frames(config, data, 216, "shock", config_path.parent,
+                                     theme=theme), generated, render.FRAME_MS)
+            with Image.open(generated) as result:
+                if result.size != (render.W, render.H) or result.n_frames < 2:
+                    raise ValueError(f"Generated {theme} GIF has no usable animation")
+            gif_bytes = generated.read_bytes()
+            digest = hashlib.sha256(gif_bytes).hexdigest()[:16]
+            image_url = ("https://raw.githubusercontent.com/" + repository + "/" +
+                         quote(branch, safe="/") + "/" +
+                         quote(destination.relative_to(root).as_posix(), safe="/") +
+                         "?v=" + digest)
+            images[theme] = (destination, gif_bytes, digest, image_url)
         caption = (f"@{username}'s GitHub contribution snapshot · {days[0]}–{days[-1]} · "
                    f"Last successful capture {observed.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC "
                    "· Daily refresh scheduled")
         replacement = (BEGIN + "\n" + f"<sub>{html.escape(caption, quote=False)}</sub>\n\n" +
-                       f"![{alt}]({image_url})\n" + END)
+                       "<picture>\n" +
+                       f"  <source media=\"(prefers-color-scheme: dark)\" srcset=\"{images['dark'][3]}\">\n" +
+                       f"  <img src=\"{images['light'][3]}\" alt=\"{html.escape(alt)}\">\n" +
+                       "</picture>\n" + END)
         updated = before + replacement + after
 
-        # GitHub publishes only after the caller commits both paths. A failed
-        # capture/render/README validation leaves the previous public GIF intact.
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(gif_bytes)
+        # GitHub publishes only after the caller commits all three paths. A
+        # failed capture/render/README validation leaves previous remote GIFs.
+        for destination, gif_bytes, _, _ in images.values():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(gif_bytes)
         readme_path.write_text(updated, encoding="utf-8")
 
     result = (f"Captured @{username} at {observed:%Y-%m-%dT%H:%M:%SZ}; "
-              f"days {days[0]}–{days[-1]}; GIF SHA-256 {digest}")
+              f"days {days[0]}–{days[-1]}; light SHA-256 {images['light'][2]}, "
+              f"dark SHA-256 {images['dark'][2]}")
     print(result)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
@@ -126,14 +138,15 @@ def main():
     parser.add_argument("--profile-root", type=Path, required=True)
     parser.add_argument("--config", default="profile-motion.json")
     parser.add_argument("--readme", default="README.md")
-    parser.add_argument("--output", default="profile-motion.gif")
+    parser.add_argument("--output", default="profile-motion.gif", help="Light-theme GIF")
+    parser.add_argument("--dark-output", default="profile-motion-dark.gif")
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--branch", default=os.environ.get("GITHUB_REF_NAME", "main"))
     args = parser.parse_args()
     if not args.repository:
         parser.error("--repository or GITHUB_REPOSITORY is required")
     update(args.profile_root, args.config, args.readme, args.output,
-           args.repository, args.branch)
+           args.repository, args.branch, dark_output_name=args.dark_output)
 
 
 if __name__ == "__main__":

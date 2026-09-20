@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -29,6 +30,7 @@ class DailyUpdateTest(unittest.TestCase):
                        update_profile.END + "\n\nContact: mailto:hello@example.com\n")
         (self.root / "README.md").write_text(self.before)
         (self.root / "profile-motion.gif").write_bytes(b"previous good GIF")
+        (self.root / "profile-motion-dark.gif").write_bytes(b"previous good dark GIF")
 
     def real_capture(self, username, output, start, end):
         self.assertEqual((username, end), ("example-user", "2026-09-20"))
@@ -51,12 +53,18 @@ class DailyUpdateTest(unittest.TestCase):
         self.assertIn("Captured @example-user", result)
         self.assertIn("https://raw.githubusercontent.com/example-user/example-user/"
                       "main/profile-motion.gif?v=", text)
+        self.assertIn("https://raw.githubusercontent.com/example-user/example-user/"
+                      "main/profile-motion-dark.gif?v=", text)
+        self.assertIn('<source media="(prefers-color-scheme: dark)"', text)
         self.assertIn("Last successful capture 2026-09-20 03:00 UTC", text)
         self.assertIn("Daily refresh scheduled", text)
         self.assertIn("Contact: mailto:hello@example.com", text)
         self.assertEqual(text.count(update_profile.BEGIN), 1)
         with Image.open(self.root / "profile-motion.gif") as gif:
-            self.assertEqual(gif.size, (580, 164))
+            self.assertEqual(gif.size, (442, 126))
+            self.assertGreater(gif.n_frames, 200)
+        with Image.open(self.root / "profile-motion-dark.gif") as gif:
+            self.assertEqual(gif.size, (442, 126))
             self.assertGreater(gif.n_frames, 200)
 
     def test_capture_failure_keeps_previous_public_files(self):
@@ -67,6 +75,8 @@ class DailyUpdateTest(unittest.TestCase):
         self.assertEqual((self.root / "README.md").read_text(), self.before)
         self.assertEqual((self.root / "profile-motion.gif").read_bytes(),
                          b"previous good GIF")
+        self.assertEqual((self.root / "profile-motion-dark.gif").read_bytes(),
+                         b"previous good dark GIF")
 
     def test_synthetic_response_is_not_a_silent_fallback(self):
         def synthetic(*args):
@@ -80,6 +90,25 @@ class DailyUpdateTest(unittest.TestCase):
         self.assertEqual((self.root / "README.md").read_text(), self.before)
         self.assertEqual((self.root / "profile-motion.gif").read_bytes(),
                          b"previous good GIF")
+        self.assertEqual((self.root / "profile-motion-dark.gif").read_bytes(),
+                         b"previous good dark GIF")
+
+    def test_dark_render_failure_preserves_both_previous_images(self):
+        actual_gif = update_profile.render.gif
+
+        def fail_dark(images, destination, duration):
+            if destination.name == "dark.gif":
+                raise RuntimeError("dark render failed")
+            return actual_gif(images, destination, duration)
+
+        with patch.object(update_profile.render, "gif", side_effect=fail_dark):
+            with self.assertRaisesRegex(RuntimeError, "dark render failed"):
+                self.run_update(self.real_capture)
+        self.assertEqual((self.root / "README.md").read_text(), self.before)
+        self.assertEqual((self.root / "profile-motion.gif").read_bytes(),
+                         b"previous good GIF")
+        self.assertEqual((self.root / "profile-motion-dark.gif").read_bytes(),
+                         b"previous good dark GIF")
 
 
 if __name__ == "__main__":
